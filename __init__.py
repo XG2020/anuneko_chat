@@ -45,7 +45,7 @@ class AnunekoConfig(ConfigBase):
     DEFAULT_TOKEN: str = Field(
         default="x-token",
         title="默认鉴权 token",
-        description="浏览器请求头中的 x-token，也可通过环境变量 ANUNEKO_TOKEN 覆盖",
+        description="登录https://anuneko.com，复制浏览器请求头中的 x-token，也可通过环境变量 ANUNEKO_TOKEN 覆盖",
     )
     WATERMARK: str = Field(
         default="\n\n—— 内容由 anuneko.com 提供",
