@@ -10,7 +10,7 @@ from nekro_agent.core import logger
 
 # -------------------- 插件元数据 --------------------
 plugin = NekroPlugin(
-    name="anuneko_chat",
+    name="Anuneko 多模型聊天",
     module_name="anuneko_chat",  
     description="通过 米哈游旗下 Anuneko 前端与橘猫/黑猫模型进行多轮对话",
     version="1.0.0",
