@@ -166,7 +166,7 @@ async def _stream_reply(session_uuid: str, text: str) -> str:
                         # 错误提示
                         try:
                             if json.loads(line).get("code") == "chat_choice_shown":
-                                return "⚠️ 检测到对话分支未选择，请重试或新建会话。"
+                                return "检测到对话分支未选择，请重试或新建会话。"
                         except Exception:
                             continue
                         continue
@@ -226,12 +226,12 @@ async def switch_model(_ctx: AgentCtx, user_id: str, target: str) -> str:
     if user_id not in user_sessions:
         chat_id = await _create_new_session(user_id)
         if not chat_id:
-            return "❌ 切换失败：无法创建会话"
+            return "切换失败：无法创建会话"
     else:
         chat_id = user_sessions[user_id]
 
     ok = await _switch_model(user_id, chat_id, target_model)
-    return f"✨ 已切换为：{target_name}" if ok else f"❌ 切换为 {target_name} 失败"
+    return f"已切换为：{target_name}" if ok else f"切换为 {target_name} 失败"
 
 
 @plugin.mount_sandbox_method(
@@ -251,41 +251,52 @@ async def new_session(_ctx: AgentCtx, user_id: str) -> str:
     new_id = await _create_new_session(user_id)
     if new_id:
         model_name = "橘猫" if user_models.get(user_id) == "Orange Cat" else "黑猫"
-        return f"✨ 已创建新的会话（当前模型：{model_name}）！"
-    return "❌ 创建会话失败，请稍后再试。"
+        return f"已创建新的会话（当前模型：{model_name}）！"
+    return "创建会话失败，请稍后再试。"
 
 
 @plugin.mount_sandbox_method(
     SandboxMethodType.TOOL,
     name="/chat 指令对话",
-    description="当用户消息以 /chat 开头时，自动调用本方法完成模型对话",
+    description=(
+        "当用户消息以 /chat 开头时，自动调用本方法完成模型对话。"
+        "调用成功后务必再把返回的字符串作为内容调用一次 send_msg_text 把结果发送给用户。"
+    ),
 )
 async def handle_chat_command(_ctx: AgentCtx, user_id: str, full_text: str) -> str:
     """处理以 /chat 开头的消息
 
     Args:
         user_id: QQ 用户唯一标识
-        full_text: 用户完整输入
+        full_text: 用户完整输入，必须以 "/chat" 开头
 
     Returns:
-        str: 完整模型回复（已追加水印），失败返回空字符串。
+        str: 模型完整回复（已自带水印）。**注意：拿到返回值后必须再执行一次**
+             `send_msg_text(_ctx, 返回值)` 才能真正把结果发出去。
+
+    Example:
+        # 第一步：拿到模型回复
+        reply = handle_chat_command(_ctx, "123456", "/chat 你好")
+        # 第二步：把回复发送给用户
+        send_msg_text(_ctx, reply)
     """
+    
     if not full_text.lstrip().startswith("/chat"):
         return ""
 
     content = full_text.lstrip()[5:].lstrip()  # 去掉 /chat 及前后空格
     if not content:
-        return "❗ 请输入内容，例如：/chat 你好"
+        return "请输入内容，例如：/chat 你好"
 
     # 获取或创建会话
     if user_id not in user_sessions:
         chat_id = await _create_new_session(user_id)
         if not chat_id:
-            return "❌ 创建会话失败，请稍后再试。"
+            return "创建会话失败，请稍后再试。"
     session_id = user_sessions[user_id]
 
-    reply = await _stream_reply(session_id, content)
-    return reply + config.WATERMARK
+    result = await _stream_reply(session_id, content)
+    return result + config.WATERMARK
 
 
 # -------------------- 清理资源 --------------------
