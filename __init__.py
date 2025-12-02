@@ -10,12 +10,12 @@ from nekro_agent.core import logger
 
 # -------------------- 插件元数据 --------------------
 plugin = NekroPlugin(
-    name="anuneko_chat",
-    module_name="anuneko_chat",  
-    description="通过 米哈游旗下 Anuneko 前端与橘猫/黑猫模型进行多轮对话",
+    name="Anuneko 多模型聊天",
+    module_name="anuneko_chat",
+    description="通过 Anuneko 前端与橘猫/黑猫模型进行多轮对话",
     version="1.0.0",
     author="XGGM",
-    url="https://github.com/XG2020/anuneko-chat",
+    url="https://github.com/XGGM2020/anuneko-chat",
 )
 
 # -------------------- 配置定义 --------------------
@@ -43,12 +43,12 @@ class AnunekoConfig(ConfigBase):
         description="切换会话模型",
     )
     DEFAULT_TOKEN: str = Field(
-        default="x-token",
+        default="x-token 自己改",
         title="默认鉴权 token",
-        description="登录https://anuneko.com，复制浏览器请求头中的 x-token，也可通过环境变量 ANUNEKO_TOKEN 覆盖",
+        description="也可通过环境变量 ANUNEKO_TOKEN 覆盖",
     )
     WATERMARK: str = Field(
-        default="\n\n—— 内容由 anuneko.com 提供",
+        default="\n\n—— 内容由 anuneko.com 提供，该服务只是一个第三方前端",
         title="回复水印",
         description="追加在每次返回内容末尾",
     )
@@ -60,7 +60,7 @@ class AnunekoConfig(ConfigBase):
     STREAM_TIMEOUT: int = Field(
         default=10,
         title="流式请求超时(秒)",
-        description="流式请求超时时间(秒)",
+        description="None 表示无超时",
     )
 
 
@@ -251,7 +251,7 @@ async def new_session(_ctx: AgentCtx, user_id: str) -> str:
     new_id = await _create_new_session(user_id)
     if new_id:
         model_name = "橘猫" if user_models.get(user_id) == "Orange Cat" else "黑猫"
-        return f"✨ 已创建新的会话（当前模型：{model_name}）！"
+        return f"已创建新的会话（当前模型：{model_name}）！"
     return "❌ 创建会话失败，请稍后再试。"
 
 
@@ -261,14 +261,14 @@ async def new_session(_ctx: AgentCtx, user_id: str) -> str:
     description="当用户消息以 /chat 开头时，自动调用本方法完成模型对话",
 )
 async def handle_chat_command(_ctx: AgentCtx, user_id: str, full_text: str) -> str:
-    """处理以 /chat 开头的消息
+    """处理以 /chat 开头的消息,并发送返回的消息
 
     Args:
         user_id: QQ 用户唯一标识
         full_text: 用户完整输入
 
     Returns:
-        str: 模型回复（已追加水印）；若未检测到 /chat，则返回空字符串
+        str: 完整模型回复（已追加水印），失败返回空字符串。
     """
     if not full_text.lstrip().startswith("/chat"):
         return ""
