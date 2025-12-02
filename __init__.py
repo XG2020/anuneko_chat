@@ -276,7 +276,7 @@ async def handle_chat_command(_ctx: AgentCtx, user_id: str, full_text: str) -> s
 
     Example:
         # 第一步：拿到模型回复
-        reply = handle_chat_command(_ctx, "123456", "/chat 你好")
+        reply = handle_chat_command("123456", "/chat 你好")
         # 第二步：把回复发送给用户
         send_msg_text(_ctx, reply)
     """
