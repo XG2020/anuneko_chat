@@ -264,11 +264,11 @@ async def new_session(_ctx: AgentCtx, user_id: str) -> str:
     ),
 )
 async def handle_chat_command(_ctx: AgentCtx, user_id: str, full_text: str) -> str:
-    """处理以 /chat 开头的消息
+    """处理以 /chat 开头后面的消息
 
     Args:
         user_id: QQ 用户唯一标识
-        full_text: 用户完整输入，必须以 "/chat" 开头
+        full_text: 用户完整输入，必须是以 "/chat" 开头后面的内容
 
     Returns:
         str: 模型完整回复（已自带水印）。**注意：拿到返回值后必须再执行一次**
@@ -276,7 +276,7 @@ async def handle_chat_command(_ctx: AgentCtx, user_id: str, full_text: str) -> s
 
     Example:
         # 第一步：拿到模型回复
-        reply = handle_chat_command("123456", "/chat 你好")
+        reply = handle_chat_command("123456", "你好")
         # 第二步：把回复发送给用户
         send_msg_text(_ctx, reply)
     """
@@ -288,7 +288,7 @@ async def handle_chat_command(_ctx: AgentCtx, user_id: str, full_text: str) -> s
     if not content:
         return "请输入内容，例如：/chat 你好"
 
-    # 获取或创建会话
+    # 自动创建会话
     if user_id not in user_sessions:
         chat_id = await _create_new_session(user_id)
         if not chat_id:
