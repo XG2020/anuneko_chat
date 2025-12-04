@@ -14,6 +14,10 @@ from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent
 from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
 
+# 导入中间件相关模块
+from nonebot.message import event_preprocessor
+from nonebot.adapters.onebot.v11 import MessageEvent as V11MsgEvent
+
 # -------------------- 插件元数据 --------------------
 plugin = NekroPlugin(
     name="Anuneko 多模型聊天",
@@ -28,6 +32,11 @@ plugin = NekroPlugin(
 @plugin.mount_config()
 class AnunekoConfig(ConfigBase):
     """Anuneko 接口配置"""
+    ENABLE: bool = Field(
+        default=True,
+        title="插件总开关",
+        description="是否启用 Anuneko 多模型聊天插件（关闭后将拒绝所有指令）",
+    )
     CHAT_API_URL: str = Field(
         default="https://anuneko.com/api/v1/chat",
         title="创建会话 API",
@@ -91,7 +100,8 @@ def _build_headers() -> Dict[str, str]:
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
         "x-app_id": "com.anuttacon.neko",
         "x-client_type": "4",
-        "x-device_id": "7b75a432-6b24-48ad-b9d3-3dc57648e3e3",
+        "x-timezone": "8",
+        "x-device_id": "c45bc77b-259e-4c74-8c51-29c3a3a54cf6",
         "x-token": token,
     }
     if cookie:
@@ -395,3 +405,20 @@ async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = Comm
     )
     
     await matcher.finish(help_message)
+
+    # -------------------- 中间件：开关控制 --------------------
+@event_preprocessor
+async def anuneko_switch_middleware(event: V11MsgEvent):
+    """如果插件被关闭，则直接阻断后续的 chat 系列命令"""
+    if not config.ENABLE:
+        # 仅阻断本插件注册过的命令，不影响其它插件
+        plain = event.get_plaintext().lstrip()
+        if any(plain.startswith(cmd) for cmd in (
+            "/chat", "/anuneko_chat", "/anuneko",
+            "/chat_model", "/anuneko_model", "/切换模型",
+            "/chat_new", "/anuneko_new", "/新建会话",
+            "/chat_help", "/anuneko_help", "/聊天帮助"
+        )):
+            # 阻断事件继续传播（NoneBot2 2.0+ 支持）
+            event.stop_propagation()
+    
