@@ -8,6 +8,12 @@ from nekro_agent.services.plugin.base import NekroPlugin, ConfigBase, SandboxMet
 from nekro_agent.api.schemas import AgentCtx
 from nekro_agent.core import logger
 
+# 导入指令相关模块
+from nonebot import on_command
+from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent
+from nonebot.matcher import Matcher
+from nonebot.params import CommandArg
+
 # -------------------- 插件元数据 --------------------
 plugin = NekroPlugin(
     name="Anuneko 多模型聊天",
@@ -106,7 +112,7 @@ async def _create_new_session(user_id: str) -> str:
             data = resp.json()
             chat_id = data.get("chat_id") or data.get("id")
             if chat_id:
-                user_sessions[user_id] = chat_id
+                user_sessions[user_id] = chat_id 
                 await _switch_model(user_id, chat_id, model)
                 return chat_id
     except Exception as e:
@@ -255,14 +261,6 @@ async def new_session(_ctx: AgentCtx, user_id: str) -> str:
     return "创建会话失败，请稍后再试。"
 
 
-@plugin.mount_sandbox_method(
-    SandboxMethodType.TOOL,
-    name="/chat 指令对话",
-    description=(
-        "当用户消息以 /chat 开头时，自动调用本方法完成模型对话。"
-        "调用成功后务必再把返回的字符串作为内容调用一次 send_msg_text 把结果发送给用户。"
-    ),
-)
 async def handle_chat_command(_ctx: AgentCtx, user_id: str, full_text: str) -> str:
     """处理以 /chat 开头后面的消息
 
@@ -306,3 +304,94 @@ async def clean_up():
     user_sessions.clear()
     user_models.clear()
     logger.info("Anuneko 聊天插件会话数据已清理")
+
+
+# -------------------- 插件指令 --------------------
+# 使用NoneBot2原生的命令注册方式
+chat_cmd = on_command("chat", aliases={"anuneko_chat", "anuneko"}, priority=5, block=True)
+
+@chat_cmd.handle()
+async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
+    """处理聊天指令"""
+    # 允许所有用户使用
+    cmd_content = arg.extract_plain_text().strip()
+
+    if not cmd_content:
+        await matcher.finish("请输入对话内容，例如：/chat 你好")
+        return
+
+    # 获取聊天相关信息
+    from nekro_agent.adapters.onebot_v11.tools.onebot_util import get_chat_info_old
+    from nekro_agent.models.db_chat_channel import DBChatChannel
+    chat_key, chat_type = await get_chat_info_old(event=event)
+    
+    # 使用现有的handle_chat_command函数处理对话，但直接传入内容而不是带前缀的消息
+    # 创建一个临时的上下文对象来满足函数参数要求
+    class TempCtx:
+        def __init__(self):
+            self.chat_key = chat_key
+            self.ms = None  # 因为我们使用matcher.finish发送消息，所以不需要消息服务
+    
+    temp_ctx = TempCtx()
+    result = await handle_chat_command(temp_ctx, chat_key, f"/chat {cmd_content}")
+    
+    # 直接通过matcher.finish发送普通文本消息
+    await matcher.finish(message=f"{result}".strip())
+
+
+chat_model_cmd = on_command("chat_model", aliases={"anuneko_model", "切换模型"}, priority=5, block=True)
+
+@chat_model_cmd.handle()
+async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
+    """处理切换模型指令"""
+    # 允许所有用户使用
+    cmd_content = arg.extract_plain_text().strip()
+
+    if not cmd_content:
+        await matcher.finish("请指定要切换的模型，例如：/chat_model 橘猫 或 /chat_model 黑猫")
+        return
+
+    # 获取聊天相关信息
+    from nekro_agent.adapters.onebot_v11.tools.onebot_util import get_chat_info_old
+    chat_key, chat_type = await get_chat_info_old(event=event)
+    
+    # 使用现有的switch_model函数切换模型
+    result = await switch_model(None, chat_key, cmd_content)
+    await matcher.finish(result)
+
+
+chat_new_cmd = on_command("chat_new", aliases={"anuneko_new", "新建会话"}, priority=5, block=True)
+
+@chat_new_cmd.handle()
+async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
+    """处理新建会话指令"""
+    # 允许所有用户使用
+    # 获取聊天相关信息
+    from nekro_agent.adapters.onebot_v11.tools.onebot_util import get_chat_info_old
+    chat_key, chat_type = await get_chat_info_old(event=event)
+    
+    # 使用现有的new_session函数创建新会话
+    result = await new_session(None, chat_key)
+    await matcher.finish(result)
+
+
+chat_help_cmd = on_command("chat_help", aliases={"anuneko_help", "聊天帮助"}, priority=5, block=True)
+
+@chat_help_cmd.handle()
+async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
+    """显示聊天插件帮助信息"""
+    # 允许所有用户使用
+    help_message = (
+        "Anuneko 多模型聊天插件使用说明：\n\n"
+        "1. /chat <内容> - 与当前模型对话\n"
+        "2. /chat_model <模型> - 切换模型（支持：橘猫/黑猫）\n"
+        "3. /chat_new - 创建新的对话会话\n"
+        "4. /chat_help - 显示此帮助信息\n\n"
+        "示例：\n"
+        "- /chat 你好，你是谁？\n"
+        "- /chat_model 橘猫\n"
+        "- /chat_new\n"
+        "\n内容由 anuneko.com 提供"
+    )
+    
+    await matcher.finish(help_message)
