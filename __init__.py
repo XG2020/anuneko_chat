@@ -88,7 +88,7 @@ def _build_headers() -> Dict[str, str]:
         "content-type": "application/json",
         "origin": "https://anuneko.com",
         "referer": "https://anuneko.com/",
-        "user-agent": "Mozilla/5.0",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
         "x-app_id": "com.anuttacon.neko",
         "x-client_type": "4",
         "x-device_id": "7b75a432-6b24-48ad-b9d3-3dc57648e3e3",
