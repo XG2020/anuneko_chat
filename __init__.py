@@ -7,16 +7,12 @@ from pydantic import Field
 from nekro_agent.services.plugin.base import NekroPlugin, ConfigBase, SandboxMethodType
 from nekro_agent.api.schemas import AgentCtx
 from nekro_agent.core import logger
-
+from nekro_agent.core.config import CoreConfig
 # 导入指令相关模块
 from nonebot import on_command
 from nonebot.adapters.onebot.v11 import Bot, Message, MessageEvent
 from nonebot.matcher import Matcher
 from nonebot.params import CommandArg
-
-# 导入中间件相关模块
-from nonebot.message import event_preprocessor
-from nonebot.adapters.onebot.v11 import MessageEvent as V11MsgEvent
 
 # -------------------- 插件元数据 --------------------
 plugin = NekroPlugin(
@@ -31,12 +27,13 @@ plugin = NekroPlugin(
 # -------------------- 配置定义 --------------------
 @plugin.mount_config()
 class AnunekoConfig(ConfigBase):
-    """Anuneko 接口配置"""
-    ENABLE: bool = Field(
-        default=True,
-        title="插件总开关",
-        description="是否启用 Anuneko 多模型聊天插件（关闭后将拒绝所有指令）",
+    """插件开关"""
+    CHAT_ON: bool = Field(
+        default=False,
+        title="聊天插件开关",
+        description="是否启用聊天插件",
     )
+    """Anuneko 接口配置"""
     CHAT_API_URL: str = Field(
         default="https://anuneko.com/api/v1/chat",
         title="创建会话 API",
@@ -94,14 +91,17 @@ def _build_headers() -> Dict[str, str]:
 
     headers = {
         "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br, zstd",
+        "accept-language": "zh-CN,zh;q=0.9",
         "content-type": "application/json",
         "origin": "https://anuneko.com",
         "referer": "https://anuneko.com/",
         "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
         "x-app_id": "com.anuttacon.neko",
         "x-client_type": "4",
+        "x-device_id": "ccfd3af9-7b28-4dc4-b3e2-6a7d288984ac",
+        "x-screen_resolution": "1920x1080",
         "x-timezone": "8",
-        "x-device_id": "c45bc77b-259e-4c74-8c51-29c3a3a54cf6",
         "x-token": token,
     }
     if cookie:
@@ -160,6 +160,18 @@ async def _send_choice(msg_id: str) -> None:
 async def _stream_reply(session_uuid: str, text: str) -> str:
     """流式对话，返回完整回复字符串"""
     headers = {
+        "accept": "*/*",
+        "accept-encoding": "gzip, deflate, br, zstd",
+        "accept-language": "zh-CN,zh;q=0.9",
+        "Content-Type": "text/plain",
+        "origin": "https://anuneko.com",
+        "referer": "https://anuneko.com/",
+        "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
+        "x-app_id": "com.anuttacon.neko",
+        "x-client_type": "4",
+        "x-device_id": "ccfd3af9-7b28-4dc4-b3e2-6a7d288984ac",
+        "x-screen_resolution": "1920x1080",
+        "x-timezone": "8",
         "x-token": os.environ.get("ANUNEKO_TOKEN", config.DEFAULT_TOKEN),
         "Content-Type": "text/plain",
     }
@@ -295,6 +307,13 @@ async def handle_chat_command(_ctx: AgentCtx, user_id: str, full_text: str) -> s
     content = full_text.lstrip()[5:].lstrip()  # 去掉 /chat 及前后空格
     if not content:
         return "请输入内容，例如：/chat 你好"
+    
+    # 注册当前频道
+    await _register_chat_channel(user_id)
+    
+    # 检查当前频道是否允许聊天
+    if not await is_channel_chat_enabled(user_id):
+        return "当前频道聊天功能已关闭，请使用 /chat_on 命令开启"
 
     # 自动创建会话
     if user_id not in user_sessions:
@@ -324,6 +343,11 @@ chat_cmd = on_command("chat", aliases={"anuneko_chat", "anuneko"}, priority=5, b
 async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
     """处理聊天指令"""
     # 允许所有用户使用
+    # 检查聊天插件是否启用
+    if not config.CHAT_ON:
+        await matcher.finish("聊天插件已关闭")
+        return
+        
     cmd_content = arg.extract_plain_text().strip()
 
     if not cmd_content:
@@ -355,6 +379,11 @@ chat_model_cmd = on_command("chat_model", aliases={"anuneko_model", "切换模�
 async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
     """处理切换模型指令"""
     # 允许所有用户使用
+    # 检查聊天插件是否启用
+    if not config.CHAT_ON:
+        await matcher.finish("聊天插件已关闭")
+        return
+        
     cmd_content = arg.extract_plain_text().strip()
 
     if not cmd_content:
@@ -365,20 +394,31 @@ async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = Comm
     from nekro_agent.adapters.onebot_v11.tools.onebot_util import get_chat_info_old
     chat_key, chat_type = await get_chat_info_old(event=event)
     
+    # 注册当前频道
+    await _register_chat_channel(chat_key)
+    
     # 使用现有的switch_model函数切换模型
     result = await switch_model(None, chat_key, cmd_content)
     await matcher.finish(result)
 
 
-chat_new_cmd = on_command("chat_new", aliases={"anuneko_new", "新建会话"}, priority=5, block=True)
+chat_new_cmd = on_command("chat_new", aliases={"anuneko_new", "新会话"}, priority=5, block=True)
 
 @chat_new_cmd.handle()
-async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
-    """处理新建会话指令"""
+async def _(matcher: Matcher, event: MessageEvent, bot: Bot):
+    """处理新会话指令"""
     # 允许所有用户使用
+    # 检查聊天插件是否启用
+    if not config.CHAT_ON:
+        await matcher.finish("聊天插件已关闭")
+        return
+
     # 获取聊天相关信息
     from nekro_agent.adapters.onebot_v11.tools.onebot_util import get_chat_info_old
     chat_key, chat_type = await get_chat_info_old(event=event)
+
+    # 注册当前频道
+    await _register_chat_channel(chat_key)
     
     # 使用现有的new_session函数创建新会话
     result = await new_session(None, chat_key)
@@ -391,34 +431,188 @@ chat_help_cmd = on_command("chat_help", aliases={"anuneko_help", "聊天帮助"}
 async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
     """显示聊天插件帮助信息"""
     # 允许所有用户使用
+    # 检查聊天插件是否启用
+    if not config.CHAT_ON:
+        await matcher.finish("聊天插件已关闭")
+        return
+        
     help_message = (
         "Anuneko 多模型聊天插件使用说明：\n\n"
         "1. /chat <内容> - 与当前模型对话\n"
         "2. /chat_model <模型> - 切换模型（支持：橘猫/黑猫）\n"
         "3. /chat_new - 创建新的对话会话\n"
-        "4. /chat_help - 显示此帮助信息\n\n"
+        "4. /chat_help - 显示此帮助信息\n"
+        "5. /chat_on [通配符] - 开启当前频道或匹配频道的聊天功能（仅管理员）\n"
+        "6. /chat_off [通配符] - 关闭当前频道或匹配频道的聊天功能（仅管理员）\n\n"
         "示例：\n"
         "- /chat 你好，你是谁？\n"
         "- /chat_model 橘猫\n"
         "- /chat_new\n"
+        "- /chat_on\n"
+        "- /chat_off\n"
+        "- /chat_on *  # 开启所有频道\n"
+        "- /chat_off group*  # 关闭所有群聊频道\n"
         "\n内容由 anuneko.com 提供"
     )
     
     await matcher.finish(help_message)
 
-    # -------------------- 中间件：开关控制 --------------------
-@event_preprocessor
-async def anuneko_switch_middleware(event: V11MsgEvent):
-    """如果插件被关闭，则直接阻断后续的 chat 系列命令"""
-    if not config.ENABLE:
-        # 仅阻断本插件注册过的命令，不影响其它插件
-        plain = event.get_plaintext().lstrip()
-        if any(plain.startswith(cmd) for cmd in (
-            "/chat", "/anuneko_chat", "/anuneko",
-            "/chat_model", "/anuneko_model", "/切换模型",
-            "/chat_new", "/anuneko_new", "/新建会话",
-            "/chat_help", "/anuneko_help", "/聊天帮助"
-        )):
-            # 阻断事件继续传播（NoneBot2 2.0+ 支持）
-            event.stop_propagation()
+
+# -------------------- 频道开关命令 --------------------
+# 存储键名
+CHANNEL_TOGGLE_KEY = "channel_toggle"
+
+async def _get_all_chat_keys() -> list:
+    """获取所有聊天频道的键名列表"""
+    # 注意：这里需要根据实际情况获取所有聊天频道的键名
+    # 由于plugin.store没有提供直接获取所有键的方法，我们可以使用
+    # 一个额外的存储键来记录所有已知的聊天频道
+    all_channels_key = "all_channels"
     
+    # 获取所有已知频道
+    all_channels_str = await plugin.store.get(
+        store_key=all_channels_key
+    )
+    
+    if all_channels_str:
+        return json.loads(all_channels_str)
+    return []
+
+async def _register_chat_channel(chat_key: str) -> None:
+    """注册一个聊天频道到已知频道列表中"""
+    all_channels_key = "all_channels"
+    
+    # 获取所有已知频道
+    all_channels = await _get_all_chat_keys()
+    
+    # 如果频道不存在，则添加到列表中
+    if chat_key not in all_channels:
+        all_channels.append(chat_key)
+        await plugin.store.set(
+            store_key=all_channels_key,
+            value=json.dumps(all_channels)
+        )
+
+async def _set_channel_status(chat_key: str, status: bool) -> None:
+    """设置指定频道的聊天状态"""
+    await plugin.store.set(
+        chat_key=chat_key,
+        store_key=CHANNEL_TOGGLE_KEY,
+        value=str(status)
+    )
+
+async def _get_matching_channels(pattern: str) -> list:
+    """根据通配符模式获取匹配的频道列表"""
+    all_channels = await _get_all_chat_keys()
+    
+    if pattern == "*":
+        return all_channels
+    
+    # 简单的通配符匹配实现
+    # 将*替换为.*，然后使用正则表达式匹配
+    import re
+    regex_pattern = pattern.replace("*", ".*")
+    regex = re.compile(regex_pattern)
+    
+    return [channel for channel in all_channels if regex.match(channel)]
+
+chat_on_cmd = on_command("chat_on", aliases={"anuneko_on", "开启聊天"}, priority=5, block=True)
+
+@chat_on_cmd.handle()
+async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
+    """处理开启频道聊天指令"""
+    # 检查用户是否有权限
+    user_id = str(event.get_user_id())
+    core_config = CoreConfig.load_config()
+    if user_id not in core_config.SUPER_USERS:
+        await matcher.finish("你没有权限使用此命令")
+        return
+    
+    # 检查聊天插件是否启用
+    if not config.CHAT_ON:
+        await matcher.finish("聊天插件已关闭")
+        return
+        
+    # 获取聊天相关信息
+    from nekro_agent.adapters.onebot_v11.tools.onebot_util import get_chat_info_old
+    chat_key, chat_type = await get_chat_info_old(event=event)
+    
+    # 获取命令参数
+    cmd_content = arg.extract_plain_text().strip()
+    
+    if cmd_content:
+        # 有参数，使用通配符匹配频道
+        matching_channels = await _get_matching_channels(cmd_content)
+        if not matching_channels:
+            await matcher.finish(f"未找到匹配 '{cmd_content}' 的频道")
+            return
+        
+        # 开启所有匹配的频道
+        for channel in matching_channels:
+            await _set_channel_status(channel, True)
+        
+        await matcher.finish(f"已开启 {len(matching_channels)} 个频道的聊天功能")
+    else:
+        # 无参数，开启当前频道
+        await _set_channel_status(chat_key, True)
+        await _register_chat_channel(chat_key)
+        await matcher.finish(f"当前频道聊天已开启")
+
+chat_off_cmd = on_command("chat_off", aliases={"anuneko_off", "关闭聊天"}, priority=5, block=True)
+
+@chat_off_cmd.handle()
+async def _(matcher: Matcher, event: MessageEvent, bot: Bot, arg: Message = CommandArg()):
+    """处理关闭频道聊天指令"""
+    # 检查用户是否有权限
+    user_id = str(event.get_user_id())
+    core_config = CoreConfig.load_config()
+    if user_id not in core_config.SUPER_USERS:
+        await matcher.finish("你没有权限使用此命令")
+        return
+    
+    # 检查聊天插件是否启用
+    if not config.CHAT_ON:
+        await matcher.finish("聊天插件已关闭")
+        return
+        
+    # 获取聊天相关信息
+    from nekro_agent.adapters.onebot_v11.tools.onebot_util import get_chat_info_old
+    chat_key, chat_type = await get_chat_info_old(event=event)
+    
+    # 获取命令参数
+    cmd_content = arg.extract_plain_text().strip()
+    
+    if cmd_content:
+        # 有参数，使用通配符匹配频道
+        matching_channels = await _get_matching_channels(cmd_content)
+        if not matching_channels:
+            await matcher.finish(f"未找到匹配 '{cmd_content}' 的频道")
+            return
+        
+        # 关闭所有匹配的频道
+        for channel in matching_channels:
+            await _set_channel_status(channel, False)
+        
+        await matcher.finish(f"已关闭 {len(matching_channels)} 个频道的聊天功能")
+    else:
+        # 无参数，关闭当前频道
+        await _set_channel_status(chat_key, False)
+        await _register_chat_channel(chat_key)
+        await matcher.finish(f"当前频道聊天已关闭")
+
+
+# -------------------- 添加频道开关检查 --------------------
+async def is_channel_chat_enabled(chat_key: str) -> bool:
+    """检查指定频道的聊天功能是否启用"""
+    # 如果插件全局关闭，则直接返回False
+    if not config.CHAT_ON:
+        return False
+    
+    # 获取当前频道的开关状态
+    status = await plugin.store.get(
+        chat_key=chat_key,
+        store_key=CHANNEL_TOGGLE_KEY
+    )
+    
+    # 默认开启（如果没有设置过）
+    return status != "False"
